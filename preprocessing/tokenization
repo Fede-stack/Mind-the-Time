@@ -1,0 +1,137 @@
+import numpy as np
+from transformers import AutoTokenizer
+
+#Define constants
+
+MASK_TOKEN_ID = 103  # ID for [MASK] token
+SPECIAL_TOKENS = [101, 102, 0]  # IDs for special tokens: [CLS], [SEP], [PAD]
+MAX_LEN = 128  # Maximum length for tokenization (example value)
+
+#tokenizer inizialization
+tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+
+def encode(texts, max_len=MAX_LEN):
+    """
+    Encode input texts using the tokenizer with specified settings.
+    
+    Args:
+        texts (list of str): Input texts to be tokenized.
+        max_len (int): Maximum length for padding/truncation.
+
+    Returns:
+        dict: Encoded texts containing input IDs, attention masks, and token type IDs.
+    """
+    encoded_texts = tokenizer(
+        texts, 
+        max_length=max_len, 
+        padding='max_length', 
+        truncation=True, 
+        return_attention_mask=True, 
+        return_token_type_ids=True, 
+        add_special_tokens=True
+    )
+    return {key: np.array(val) for key, val in encoded_texts.items()}
+
+def get_masked_input_and_labels(encoded_texts, mask_token_id=MASK_TOKEN_ID):
+    """
+    Generate masked inputs and corresponding labels for training masked language models.
+    
+    Args:
+        encoded_texts (np.ndarray): Array of encoded input IDs.
+        mask_token_id (int): ID for the [MASK] token.
+
+    Returns:
+        tuple: (masked inputs, labels, sample weights)
+    """
+    #Initialize masks
+    inp_mask = np.random.rand(*encoded_texts.shape) < 0.25
+
+    #Exclude special tokens from masking
+    for token in SPECIAL_TOKENS:
+        inp_mask[encoded_texts == token] = False
+
+    #Initialize labels
+    labels = -1 * np.ones(encoded_texts.shape, dtype=int)
+    labels[inp_mask] = encoded_texts[inp_mask]
+
+    #Create masked inputs
+    encoded_texts_masked = np.copy(encoded_texts)
+    inp_mask_2mask = inp_mask & (np.random.rand(*encoded_texts.shape) < 0.90)
+    encoded_texts_masked[inp_mask_2mask] = mask_token_id
+
+    #Set 10% of masked tokens to random tokens
+    inp_mask_2random = inp_mask & ~inp_mask_2mask
+    encoded_texts_masked[inp_mask_2random] = np.random.randint(3, mask_token_id, inp_mask_2random.sum())
+
+    #Generate sample weights
+    sample_weights = np.ones(labels.shape)
+    sample_weights[labels == -1] = 0
+
+    #y_labels are the same as the original input tokens
+    y_labels = np.copy(encoded_texts)
+
+    return encoded_texts_masked, y_labels, sample_weights
+
+#Encode the raw texts
+ids = []
+masks = []
+for text in raw_texts:
+    # Tokenize each text
+    inputs = tokenizer(
+        text, 
+        max_length=MAX_LEN, 
+        padding='max_length', 
+        truncation=True, 
+        return_attention_mask=True, 
+        return_token_type_ids=True, 
+        add_special_tokens=True
+    )
+    ids.append(inputs['input_ids'])
+    masks.append(inputs['attention_mask'])
+
+#Convert lists to numpy arrays
+ids = np.array(ids)
+masks = np.array(masks)
+
+#generate masked inputs, labels, and sample weights
+x_masked_train, y_masked_labels, sample_weights = get_masked_input_and_labels(ids)
+
+# Prepare the dataset dictionary
+def prepare_dataset(x_masked_train, y_masked_labels, masks):
+    """
+    Prepare the dataset dictionary for training.
+
+    Args:
+        x_masked_train (np.ndarray): Masked input IDs.
+        y_masked_labels (np.ndarray): Labels for masked language modeling.
+        masks (np.ndarray): Attention masks.
+
+    Returns:
+        dict: Dictionary containing input IDs, attention masks, and labels.
+    """
+    return {
+        'input_ids': x_masked_train,
+        'attention_mask': masks,
+        'labels': y_masked_labels
+    }
+
+# Create the training set
+training_set = prepare_dataset(x_masked_train, y_masked_labels, masks)
+
+# Example date list for year data
+date_list = ["0", "1"]  #example dates
+year = date_list
+
+#calculate the number of unique values in 'time' data
+dim_y = len(np.unique(time))
+
+#create a dictionary to store the number of unique values for each input
+num_unique_values_dict = {}
+for idx, c in enumerate(time):
+    num_unique_vals = len(np.unique(c))
+    num_unique_values_dict[f'input{idx}'] = num_unique_vals
+
+#get vocabulary and its size from the tokenizer
+vocabulary = tokenizer.get_vocab()
+vocab_size = len(vocabulary)
+
