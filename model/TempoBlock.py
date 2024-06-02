@@ -101,6 +101,7 @@ class TempoBlockModel:
         model = Model(inputs=[input_ids, attention_mask, time_input], outputs=output)
 
         # Compile the model
+        
         opt = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
         
         model.compile(optimizer=tf.keras.mixed_precision.LossScaleOptimizer(opt), 
