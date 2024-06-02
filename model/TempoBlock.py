@@ -4,6 +4,21 @@ from tensorflow.keras.layers import Dense, Embedding
 from transformers import TFAutoModel, AutoTokenizer
 import numpy as np
 
+def set_trainable_bias_only(encoder):
+    transformer_model = getattr(encoder, 'transformer', encoder)
+    for layer in transformer_model.layers:
+        layer.trainable = False
+
+        if hasattr(layer, 'weights'):
+            for weight in layer.weights:
+                if 'bias' in weight.name:
+
+                    weight._handle_name = weight.name
+                    encoder.add_weight(name=weight.name,
+                                       shape=weight.shape,
+                                       trainable=True,
+                                       initializer=tf.constant_initializer(weight.numpy()))
+
 class TempoBlockModel:
     def __init__(self, model_name, max_len, embed_dim, vocab_size, tokenizer):
         self.MODEL_NAME = model_name
@@ -22,6 +37,7 @@ class TempoBlockModel:
         # Load pre-trained encoder
         encoder = TFAutoModel.from_pretrained(self.MODEL_NAME, return_dict=True, output_hidden_states=True, from_pt=True)
         encoder.resize_token_embeddings(len(self.tokenizer))
+        # set_trainable_bias_only(encoder)
         
         # Get the encoder outputs
         encoder_outputs = encoder({"input_ids": input_ids, "attention_mask": attention_mask}, training=True)
