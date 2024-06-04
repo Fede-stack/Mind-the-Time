@@ -1,7 +1,12 @@
 def find_relevant_documents(documents, keywords):
-  """
-  find the relevant documents based on keywords.
-  keywords is a list containing the words to consider for LSC task (e.g., for the English dataset there are 37 words)
+  """Finds all documents containing AT LEAST ONE of the keywords.
+
+  Args:
+      documents: A list of strings representing the documents.
+      keywords: A list of strings representing the keywords to search for.
+
+  Returns:
+      A tuple containing a list of relevant documents and a list of their indices in the original list.
   """
     relevant_docs = []
     idx_ = []
