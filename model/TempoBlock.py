@@ -3,19 +3,12 @@ from tensorflow.keras import layers, Model, Input
 from tensorflow.keras.layers import Dense, Embedding
 from transformers import TFAutoModel, AutoTokenizer
 import numpy as np
+from tensorflow.keras.mixed_precision import experimental as mixed_precision
 
-class TempoBlockModel:
-    
-    def __init__(self, model_name, max_len, embed_dim, vocab_size, tokenizer, learning_rate):
-        self.MODEL_NAME = model_name
-        self.MAX_LEN = max_len
-        self.EMBED_DIM = embed_dim
-        self.vocab_size = vocab_size
-        self.tokenizer = tokenizer
-        self.model = self.build_model()
-        self.learning_rate = learning_rate
+policy = mixed_precision.Policy('mixed_float16')
+mixed_precision.set_policy(policy)
 
-    def set_trainable_bias_only(self, encoder):
+def set_trainable_bias_only(self, encoder):
         """
         Sets only the bias terms of the encoder layers to be trainable.
         """
@@ -33,81 +26,122 @@ class TempoBlockModel:
                             initializer=tf.constant_initializer(weight.numpy())
                         )
 
-    def build_model(self):
+# defining a  projection layer
+class ProjectionLayer(layers.Layer):
+    def __init__(self, input_dim, output_dim, **kwargs):
+        super(ProjectionLayer, self).__init__(**kwargs)
+        self.input_dim = input_dim
+        self.output_dim = output_dim
         
-        # Define input layers
-        
-        input_ids = Input(shape=(self.MAX_LEN,), dtype=tf.int32, name='input_ids')
-        attention_mask = Input(shape=(self.MAX_LEN,), dtype=tf.int32, name='attention_mask')
-        token_type_ids = Input(shape=(self.MAX_LEN,), dtype=tf.int32, name='token_type_ids')
-        
-        # Load pre-trained encoder
-        
-        encoder = TFAutoModel.from_pretrained(self.MODEL_NAME, return_dict=True, output_hidden_states=True, from_pt=True)
-        encoder.resize_token_embeddings(len(self.tokenizer))
-        self.set_trainable_bias_only(encoder)  # Apply the function to set bias only as trainable
-        
-        # Get the encoder outputs
-        
-        encoder_outputs = encoder({"input_ids": input_ids, "attention_mask": attention_mask}, training=True)
-        pooler_outputs = encoder_outputs.last_hidden_state
+    def build(self, input_shape):
+        # create layer weights, shape = (input_dim, output_dim)
+        self.embeddings = self.add_weight(
+            shape=(self.input_dim, self.output_dim),
+            initializer='uniform',
+            trainable=True,
+            name='embeddings'
+        )
+    
+    def call(self, inputs):
+        # convert inputs to integers
+        inputs = tf.cast(inputs, tf.int32)
+        # lookup embeddings for input indices
+        return tf.nn.embedding_lookup(self.embeddings, inputs)
+    
+    def get_config(self):
+        # enable layer serialization
+        config = super(ProjectionLayer, self).get_config()
+        config.update({
+            'input_dim': self.input_dim,
+            'output_dim': self.output_dim,
+        })
+        return config
 
-        # Additional input for time embeddings 
-        
-        time_input = Input(shape=(1,))
-        emb_time = Embedding(len(np.unique(year)), 2)(time_input)
-        xt = Dense(self.EMBED_DIM, activation='linear')(emb_time)
-        xt = layers.Reshape((1, self.EMBED_DIM))(xt)
 
-        # Hierarchical Attention mechanism
+class HierarchicalAttentionLayer(layers.Layer):
+    def __init__(self, vocab_size, embed_dim, max_len, **kwargs):
+        super(HierarchicalAttentionLayer, self).__init__(**kwargs)
+        self.vocab_size = vocab_size
+        self.embed_dim = embed_dim
+        self.max_len = max_len
+        self.embedding = layers.Embedding(vocab_size, 2)
+        self.dense = layers.Dense(embed_dim, activation='linear')
+        self.attention = layers.Attention()
+        self.dropout = layers.Dropout(0.1, name="encoder_2/att_dropout")
+        self.layer_norm = layers.LayerNormalization(epsilon=1e-6)
+
+    def call(self, inputs, pooler_outputs):
+        # input embeddings
+        emb_output = self.embedding(inputs)
+        xt = self.dense(emb_output)
+        xt = layers.Reshape((1, self.embed_dim))(xt)
         
         hier = []
-        for i in range(self.MAX_LEN):
-            resh = layers.Reshape((1, self.EMBED_DIM))(pooler_outputs[:, i, :])
+        for i in range(self.max_len):
+            resh = layers.Reshape((1, self.embed_dim))(pooler_outputs[:, i, :])
             conc = layers.Concatenate(axis=1)([resh, xt])
-            
-            mha2 = layers.Attention()([conc, conc, conc])
-            mha2 = tf.reduce_sum(mha2, axis=1)
-            
-            mha2 = layers.Reshape((1, self.EMBED_DIM))(mha2)
-            hier.append(mha2)
-
-        # Combine hierarchical outputs
+            att_tt = self.attention([conc, conc, conc])
+            att_tt = tf.reduce_sum(att_tt, axis=1)
+            att_tt = layers.Reshape((1, self.embed_dim))(att_tt)
+            hier.append(att_tt)
         
         summed_output = layers.Concatenate(axis=1)(hier)
-        attention_output = layers.Dropout(0.1, name="encoder_attention_dropout")(summed_output)
-        attention_output = layers.LayerNormalization(epsilon=1e-6)(attention_output)
+        attention_output = self.dropout(summed_output)
+        attention_output = self.layer_norm(attention_output)
+        
+        return attention_output
 
-        # Feed-forward layer
-        
-        ffn = tf.keras.Sequential([
-            layers.Dense(128, activation="gelu"),
-            layers.Dense(self.EMBED_DIM),
-        ])
-        ffn_output = ffn(attention_output)
-        ffn_output = layers.Dropout(0.1)(ffn_output)
+# define input layers
+input_ids = Input(shape=(MAX_LEN,), dtype=tf.int32)
+attention_mask = Input(shape=(MAX_LEN,), dtype=tf.int32)
+token_type_ids = Input(shape=(MAX_LEN,), dtype=tf.int32)
 
-        # Combine feed-forward output with encoder outputs
-        
-        sequence_output = layers.LayerNormalization(epsilon=1e-6)(pooler_outputs + ffn_output)
+# load pretrained model
+encoder = TFAutoModel.from_pretrained(MODEL_NAME, return_dict=True, output_hidden_states=True)
+encoder.resize_token_embeddings(len(tokenizer))
 
-        # Global Average Pooling
-        
-        outs = layers.GlobalAveragePooling1D()(sequence_output[:, 1:, :])
-        output = Dense(self.vocab_size, activation="softmax")(sequence_output)
+# get encoder outputs
+outputs = encoder({"input_ids": input_ids, "attention_mask": attention_mask}, training=True)
+pooler_outputs = outputs.last_hidden_state
 
-        # Define the model
-        
-        model = Model(inputs=[input_ids, attention_mask, time_input], outputs=output)
+# define hierarchical attention layer
+hierarchical_attention_layer = HierarchicalAttentionLayer(vocab_size=len(np.unique(year)), embed_dim=EMBED_DIM, max_len=MAX_LEN)
+inputs = Input(shape=(1,))
+attention_output = hierarchical_attention_layer(inputs, pooler_outputs)
 
-        # Compile the model
-        
-        opt = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
-        
-        model.compile(optimizer=tf.keras.mixed_precision.LossScaleOptimizer(opt), 
-                      loss=tf.keras.losses.SparseCategoricalCrossentropy(reduction=tf.keras.losses.Reduction.NONE), 
-                      metrics=["accuracy"])
-        
-        return model
+# feed-forward layer
+ffn = tf.keras.Sequential([
+    layers.Dense(128, activation="gelu"),
+    layers.Dense(EMBED_DIM),
+])
 
-# model = TempoBlockModel(MODEL_NAME, MAX_LEN, EMBED_DIM, vocab_size, tokenizer)
+ffn_output = ffn(attention_output)
+ffn_output = layers.Dropout(0.1)(ffn_output)
+
+# adding residual connection
+sequence_output = layers.LayerNormalization(epsilon=1e-6)(pooler_outputs + ffn_output)
+
+#global average pooling
+outs = layers.GlobalAveragePooling1D()(sequence_output[:, 1:, :])
+
+# final dense layer with softmax activation
+output = layers.Dense(vocab_size, activation="softmax")(sequence_output)
+
+#defining the model
+model = Model(inputs=[[input_ids, attention_mask], inputs], outputs=[output])
+opt = tf.keras.optimizers.Adam(learning_rate=1e-7)
+
+# compiling the model with mixed precision loss scaling
+model.compile(optimizer=tf.keras.mixed_precision.LossScaleOptimizer(opt), 
+              loss=tf.keras.losses.SparseCategoricalCrossentropy(reduction=tf.keras.losses.Reduction.NONE), 
+              metrics=["accuracy"])
+
+tf.random.set_seed(0)
+history = model.fit(
+    [x_train, embs_train_year],
+    y_train.astype(np.int32),
+    epochs=2,
+    shuffle = True,
+    batch_size=12,
+    sample_weight=sample_weights
+    )
