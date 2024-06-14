@@ -64,7 +64,7 @@ class HierarchicalAttentionLayer(layers.Layer):
         self.vocab_size = vocab_size
         self.embed_dim = embed_dim
         self.max_len = max_len
-        self.embedding = layers.Embedding(vocab_size, 2)
+        self.embedding = layers.ProjectionLayer(vocab_size, 2)
         self.dense = layers.Dense(embed_dim, activation='linear')
         self.attention = layers.Attention()
         self.dropout = layers.Dropout(0.1, name="encoder_2/att_dropout")
