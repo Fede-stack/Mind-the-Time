@@ -66,7 +66,7 @@ for parola in ann_list:
             masks.append(inputs['attention_mask'])
             idx_.append(find_neural_network_indices(tokenizer.convert_ids_to_tokens(tokenizer.encode(doc)), parola))
 
-        #  training set creation
+        #   training set creation
         if ids and masks:
             x_masked_train, y_masked_labels, _ = get_masked_input_and_labels(np.array(ids))
             training_set = {'input_ids': x_masked_train, 'attention_mask': np.array(masks), 'labels': y_masked_labels}
@@ -85,10 +85,12 @@ for parola in ann_list:
             print("Skipping prediction due to empty inputs.")
             nn.append(np.repeat(0, 768))
         
-        #pulizia della memoria
+        #pulizia 
         del ids, masks, x_masked_train, y_masked_labels, training_set, input_test, embs_nn
         gc.collect()
 
     #append results based on cosine similarity
     coss.append(1 - cosine_similarity([nn[0], nn[1]])[0][1])
     nns.append(nn)
+
+pd.DataFrame(coss).to_csv('cosine_sims.csv', index = False)
