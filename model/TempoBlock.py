@@ -26,7 +26,7 @@ def set_trainable_bias_only(self, encoder):
                             initializer=tf.constant_initializer(weight.numpy())
                         )
 
-# defining a  projection layer
+#Defining a  projection layer for temporal embeddings
 class ProjectionLayer(layers.Layer):
     def __init__(self, input_dim, output_dim, **kwargs):
         super(ProjectionLayer, self).__init__(**kwargs)
