@@ -1,7 +1,8 @@
+# MLM task from scratch
+# Mask randomly  25% of tokens and change 10% of tokens for f.e. document
+
 import numpy as np
 from transformers import AutoTokenizer
-
-#Define constants
 
 MASK_TOKEN_ID = 103  # ID for [MASK] token
 SPECIAL_TOKENS = [101, 102, 0]  # IDs for special tokens: [CLS], [SEP], [PAD]
