@@ -1,6 +1,6 @@
 import tensorflow as tf
 from tensorflow.keras import layers, Model, Input
-from tensorflow.keras.layers import Dense, Embedding
+from tensorflow.keras.layers import Dense
 from transformers import TFAutoModel, AutoTokenizer
 import numpy as np
 from tensorflow.keras.mixed_precision import experimental as mixed_precision
@@ -25,6 +25,14 @@ def set_trainable_bias_only(self, encoder):
                             trainable=True,  # Make bias trainable
                             initializer=tf.constant_initializer(weight.numpy())
                         )
+
+class ReduceSumLayer(Layer):
+    def __init__(self, axis, **kwargs):
+        super(ReduceSumLayer, self).__init__(**kwargs)
+        self.axis = axis
+
+    def call(self, inputs):
+        return tf.reduce_sum(inputs, axis=self.axis)
 
 #Defining a  projection layer for temporal embeddings
 class ProjectionLayer(layers.Layer):
@@ -81,7 +89,7 @@ class HierarchicalAttentionLayer(layers.Layer):
             resh = layers.Reshape((1, self.embed_dim))(pooler_outputs[:, i, :])
             conc = layers.Concatenate(axis=1)([resh, xt])
             att_tt = self.attention([conc, conc, conc])
-            att_tt = tf.reduce_sum(att_tt, axis=1)
+            att_tt = ReduceSumLayer(axis=1)(att_tt)
             att_tt = layers.Reshape((1, self.embed_dim))(att_tt)
             hier.append(att_tt)
         
