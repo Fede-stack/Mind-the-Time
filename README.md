@@ -1,1 +1,1 @@
-# Mind the Time: A Time-Aware Language Model
+# Time is All You Need: A Time-Aware Language Model
